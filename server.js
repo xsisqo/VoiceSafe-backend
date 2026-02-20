@@ -8,7 +8,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Root endpoint
+// Root endpoint – kontrola, že server beží
 app.get('/', (req, res) => {
     res.send('VoiceSafe backend is running!');
 });
@@ -35,21 +35,26 @@ app.post('/upload', upload.single('audio'), (req, res) => {
     res.json({ status: 'success', message: 'File uploaded', filename: req.file.filename });
 });
 
-// Endpoint pre zoznam súborov
-app.get('/files', (req, res) => {
+// Endpoint na zoznam všetkých súborov
+app.get('/uploads', (req, res) => {
     const uploadDir = path.join(__dirname, 'uploads');
     if (!fs.existsSync(uploadDir)) return res.json({ files: [] });
     const files = fs.readdirSync(uploadDir);
     res.json({ files });
 });
 
-// Endpoint pre stiahnutie súboru
-app.get('/files/:filename', (req, res) => {
-    const filePath = path.join(__dirname, 'uploads', req.params.filename);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ status: 'error', message: 'File not found' });
-    res.download(filePath);
+// Endpoint na prehratie/stiahnutie konkrétneho súboru
+app.get('/uploads/:filename', (req, res) => {
+    const uploadDir = path.join(__dirname, 'uploads');
+    const filePath = path.join(uploadDir, req.params.filename);
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ status: 'error', message: 'File not found' });
+    }
+
+    res.sendFile(filePath);
 });
 
-// Spustenie servera
+// Spustenie servera na porte Render alebo default 5000
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
