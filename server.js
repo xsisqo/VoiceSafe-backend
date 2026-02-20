@@ -8,7 +8,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Root endpoint – keď niekto navštívi hlavnú URL
+// Root endpoint
 app.get('/', (req, res) => {
     res.send('VoiceSafe backend is running!');
 });
@@ -24,7 +24,6 @@ const storage = multer.diskStorage({
         cb(null, Date.now() + '-' + file.originalname);
     }
 });
-
 const upload = multer({ storage });
 
 // Endpoint pre upload súboru
@@ -36,6 +35,21 @@ app.post('/upload', upload.single('audio'), (req, res) => {
     res.json({ status: 'success', message: 'File uploaded', filename: req.file.filename });
 });
 
-// Spustenie servera na porte z Render alebo default 5000
+// Endpoint pre zoznam súborov
+app.get('/files', (req, res) => {
+    const uploadDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadDir)) return res.json({ files: [] });
+    const files = fs.readdirSync(uploadDir);
+    res.json({ files });
+});
+
+// Endpoint pre stiahnutie súboru
+app.get('/files/:filename', (req, res) => {
+    const filePath = path.join(__dirname, 'uploads', req.params.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ status: 'error', message: 'File not found' });
+    res.download(filePath);
+});
+
+// Spustenie servera
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
