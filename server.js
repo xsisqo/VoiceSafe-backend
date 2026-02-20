@@ -8,6 +8,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Root endpoint – keď niekto navštívi hlavnú URL
+app.get('/', (req, res) => {
+    res.send('VoiceSafe backend is running!');
+});
+
 // Nastavenie ukladania súborov
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -31,6 +36,6 @@ app.post('/upload', upload.single('audio'), (req, res) => {
     res.json({ status: 'success', message: 'File uploaded', filename: req.file.filename });
 });
 
-// Spustenie servera
-const PORT = 5000;
+// Spustenie servera na porte z Render alebo default 5000
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
