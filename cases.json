@@ -1,0 +1,99 @@
+{
+  "cases": [
+    {
+      "id": "fa907c6da4fa7819c82ee5bf6",
+      "created_at": "2026-02-22T01:19:45.142Z",
+      "meta": {
+        "title": "Test Case 1",
+        "platform": "WhatsApp",
+        "country": "SK",
+        "language": "EN",
+        "tags": [
+          "Crypto",
+          "scam"
+        ],
+        "notes": "First test"
+      },
+      "data": {
+        "status": "success",
+        "message": "File received",
+        "filename": "1771723102546-test.mp3",
+        "uploaded_at": "2026-02-22T01:18:22.631Z",
+        "ai_voice_prob": 15,
+        "scam_score": 42,
+        "stress_level": 25
+      }
+    },
+    {
+      "id": "c9e6b798adc7f819c82e76ce8",
+      "created_at": "2026-02-22T01:12:10.728Z",
+      "meta": {
+        "title": "Invest",
+        "platform": "Facebook",
+        "country": "Florida",
+        "language": "ENG",
+        "tags": [
+          "crypto"
+        ],
+        "notes": "rgtgg"
+      },
+      "data": {
+        "status": "success",
+        "message": "File received",
+        "filename": "1771722626622-test.mp3",
+        "uploaded_at": "2026-02-22T01:10:26.691Z",
+        "ai_voice_prob": 15,
+        "scam_score": 42,
+        "stress_level": 25
+      }
+    },
+    {
+      "id": "a9bb881c9a551c2f",
+      "created_at": "2026-02-22T00:03:46.025Z",
+      "updated_at": "2026-02-22T00:03:46.025Z",
+      "meta": {
+        "title": "Invest",
+        "platform": "Telegram",
+        "country": "Florida",
+        "language": "ENG",
+        "tags": [
+          "crypto"
+        ],
+        "notes": "afkjfojfcks"
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771718600993-test.mp3",
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "uploaded_at": "2026-02-22T00:03:21.048Z"
+      }
+    },
+    {
+      "id": "bbeee36fb696c377",
+      "created_at": "2026-02-22T00:00:01.184Z",
+      "updated_at": "2026-02-22T00:00:01.184Z",
+      "meta": {
+        "title": "Invest",
+        "platform": "WhatsApp",
+        "country": "Florida",
+        "language": "ENG",
+        "tags": [
+          "crypto"
+        ],
+        "notes": "I have invest in crypto"
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771718128453-test.mp3",
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "uploaded_at": "2026-02-21T23:55:28.506Z"
+      }
+    }
+  ]
+}
