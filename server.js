@@ -7,50 +7,64 @@ const axios = require("axios");
 const FormData = require("form-data");
 
 const app = express();
+
+// --------------------
+// BASIC MIDDLEWARE
+// --------------------
 app.use(cors());
 app.use(express.json());
 
-// ====== CONFIG
-// Local default: Flask running on 127.0.0.1:5000/analyze
-// Production: set AI_URL in Render env vars (example: https://your-ai.onrender.com/analyze)
-const AI_URL =
-  process.env.AI_URL ||
-  "https://voicesafe-ai.onrender.com/analyze";
+// --------------------
+// CONFIG
+// --------------------
+// Cloud AI (Render) - FIXED URL
+const AI_URL = process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze";
 
-// IMPORTANT: Render gives PORT dynamically; local uses 10000
+// Render uses dynamic PORT, local can use 10000
 const PORT = process.env.PORT || 10000;
 
-// ====== Upload folder
+// Upload dir
 const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
-// ====== Multer storage
+// --------------------
+// MULTER (upload)
+// --------------------
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
 
-const upload = multer({ storage });
+// Accept up to 25MB (you can change)
+const upload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
 
-// Accept BOTH field names: "file" and "audio"
+// Accept BOTH field names (frontend sometimes sends file, old versions audio)
 const uploadAny = upload.fields([
   { name: "file", maxCount: 1 },
   { name: "audio", maxCount: 1 },
 ]);
 
-// ====== In-memory simple DB (if you already have your DB, keep your own version)
-// This keeps compatibility: /cases, /case/:id, /case (POST)
-let CASES = [];
-
-// ====== Root
-app.get("/", (req, res) => res.send("Backend OK ✅"));
-
-// ====== Health
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "voicesafe-backend", ai_url: AI_URL });
+// --------------------
+// ROUTES
+// --------------------
+app.get("/", (req, res) => {
+  res.send("Backend OK ✅");
 });
 
-// ====== Upload + Analyze
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "voicesafe-backend",
+    ai_url: AI_URL,
+  });
+});
+
+// Upload + Analyze
 app.post("/upload", uploadAny, async (req, res) => {
   try {
     const f =
@@ -64,14 +78,20 @@ app.post("/upload", uploadAny, async (req, res) => {
       });
     }
 
-    console.log("File uploaded:", f);
+    console.log("File uploaded:", {
+      originalname: f.originalname,
+      filename: f.filename,
+      path: f.path,
+      size: f.size,
+      mimetype: f.mimetype,
+    });
 
-    // Send file to Flask AI
-    const fullPath = f.path; // already absolute-ish on Windows
-    console.log("Sending file to AI:", fullPath, "AI_URL:", AI_URL);
+    // Send file to AI (Render)
+    console.log("Sending file to AI:", f.path);
+    console.log("AI_URL:", AI_URL);
 
     const form = new FormData();
-    form.append("file", fs.createReadStream(fullPath), f.originalname);
+    form.append("file", fs.createReadStream(f.path), f.originalname);
 
     const aiResp = await axios.post(AI_URL, form, {
       headers: form.getHeaders(),
@@ -80,90 +100,30 @@ app.post("/upload", uploadAny, async (req, res) => {
       timeout: 120000,
     });
 
-    // Ensure consistent payload for frontend
+    // Make sure response is JSON
     const out = aiResp.data || {};
-    out.filename = out.filename || f.filename;
+    if (!out.filename) out.filename = f.filename;
 
     return res.json(out);
   } catch (err) {
     console.error("UPLOAD/AI ERROR:", err?.message || err);
 
-    // If axios error, show helpful detail
+    // Axios extra detail
     const detail = err?.response?.data || null;
+    const status = err?.response?.status || 500;
 
     return res.status(500).json({
       status: "error",
       message: "Analyze failed. Check Backend/AI logs.",
+      ai_status: status,
       detail,
     });
   }
 });
 
-// ====== CASES API (simple version)
-function makeId() {
-  return (
-    Date.now().toString(16) + Math.random().toString(16).slice(2, 10)
-  ).replace(".", "");
-}
-
-app.get("/cases", (req, res) => {
-  const q = (req.query.q || "").toLowerCase().trim();
-  const tag = (req.query.tag || "").toLowerCase().trim();
-
-  let items = [...CASES];
-
-  if (q) {
-    items = items.filter((c) => {
-      const meta = c.meta || {};
-      const data = c.data || {};
-      const hay =
-        `${meta.title || ""} ${meta.notes || ""} ${data.filename || ""}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }
-
-  if (tag) {
-    items = items.filter((c) => {
-      const tags = (c.meta?.tags || []).map((t) => String(t).toLowerCase());
-      return tags.includes(tag);
-    });
-  }
-
-  res.json({ status: "success", total: items.length, cases: items });
-});
-
-app.get("/case/:id", (req, res) => {
-  const id = req.params.id;
-  const item = CASES.find((c) => c.id === id);
-  if (!item) return res.status(404).json({ status: "error", message: "Case not found" });
-  res.json({ status: "success", case: item });
-});
-
-app.post("/case", (req, res) => {
-  const meta = req.body?.meta || {};
-  const data = req.body?.data || null;
-
-  const id = makeId();
-  const now = new Date().toISOString();
-
-  const item = {
-    id,
-    created_at: now,
-    meta: {
-      title: meta.title || "",
-      platform: meta.platform || "",
-      country: meta.country || "",
-      language: meta.language || "EN",
-      tags: Array.isArray(meta.tags) ? meta.tags : [],
-      notes: meta.notes || "",
-    },
-    data,
-  };
-
-  CASES.unshift(item);
-  res.json({ status: "success", caseId: id, case: item });
-});
-
+// --------------------
+// START
+// --------------------
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`AI_URL = ${AI_URL}`);
