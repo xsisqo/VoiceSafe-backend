@@ -7,8 +7,6 @@ const path = require("path");
 const crypto = require("crypto");
 const axios = require("axios");
 const FormData = require("form-data");
-const http = require("http");
-const https = require("https");
 
 const app = express();
 app.use(cors());
@@ -16,21 +14,10 @@ app.use(express.json({ limit: "2mb" }));
 
 const PORT = process.env.PORT || 10000;
 const AI_URL = process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze";
-const AI_BASE = AI_URL.replace(/\/analyze\/?$/, "");
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 const DATA_DIR = path.join(__dirname, "data");
 const CASES_FILE = path.join(DATA_DIR, "cases.json");
-
-// ---- axios instance (keep-alive + higher timeouts) ----
-const axiosAI = axios.create({
-  timeout: 120000, // 120s
-  maxBodyLength: Infinity,
-  maxContentLength: Infinity,
-  httpAgent: new http.Agent({ keepAlive: true }),
-  httpsAgent: new https.Agent({ keepAlive: true }),
-  validateStatus: () => true
-});
 
 function ensureDirs() {
   if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -49,91 +36,98 @@ async function readCases() {
     return { cases: [] };
   }
 }
+
 async function writeCases(obj) {
   await fsp.writeFile(CASES_FILE, JSON.stringify(obj, null, 2), "utf8");
 }
+
 function makeId() {
   return crypto.randomBytes(12).toString("hex");
 }
 
-// Multer
+function safeJsonParse(str) {
+  try { return JSON.parse(str); } catch { return null; }
+}
+
+function normalizeMeta(meta) {
+  const m = meta || {};
+  const tags =
+    Array.isArray(m.tags) ? m.tags :
+    typeof m.tags === "string" ? m.tags.split(",") :
+    [];
+
+  return {
+    title: m.title || "",
+    platform: m.platform || "",
+    country: m.country || "",
+    language: m.language || "",
+    tags: tags.map(String).map(s => s.trim()).filter(Boolean),
+    notes: m.notes || ""
+  };
+}
+
+// Multer upload
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
-const upload = multer({ storage });
 
-// ---------- Helpers: AI warmup + retry ----------
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
+// Zvýšime limit pre upload na backend (napr. 30MB)
+const upload = multer({
+  storage,
+  limits: { fileSize: 30 * 1024 * 1024 } // 30MB
+});
 
-async function warmupAI() {
-  // Skúsime /health, ak neexistuje, skúsime /
-  const urls = [`${AI_BASE}/health`, `${AI_BASE}/`];
-  for (const u of urls) {
-    try {
-      const r = await axiosAI.get(u);
-      if (r.status >= 200 && r.status < 500) return { ok: true, url: u, status: r.status };
-    } catch (_) {}
+// Best-effort "wake" AI (free instance môže spať)
+async function warmupAi() {
+  const base = AI_URL.replace(/\/analyze$/i, "");
+  try {
+    await axios.get(base + "/", { timeout: 15000 });
+    return { ok: true };
+  } catch {
+    return { ok: false };
   }
-  return { ok: false };
 }
 
-function isRetryable(err) {
-  const msg = String(err?.message || "").toLowerCase();
-  const code = String(err?.code || "").toUpperCase();
-  return (
-    msg.includes("stream has been aborted") ||
-    msg.includes("socket hang up") ||
-    msg.includes("econnreset") ||
-    msg.includes("econnaborted") ||
-    code === "ECONNRESET" ||
-    code === "ECONNABORTED" ||
-    code === "ETIMEDOUT"
-  );
-}
+// KĽÚČOVÝ FIX: form-data maxDataSize (default 2MB) -> Infinity
+async function sendToAi(filePath, originalName) {
+  const MAX_TRIES = 3;
 
-async function sendFileToAI(filePath, originalname) {
-  // 3 pokusy: 0s, 2s, 5s
-  const delays = [0, 2000, 5000];
+  const warm = await warmupAi();
+  console.log("AI warmup:", warm);
 
-  for (let attempt = 0; attempt < delays.length; attempt++) {
-    if (delays[attempt]) await sleep(delays[attempt]);
+  let lastErr = null;
 
-    // pred prvým pokusom sprav warmup
-    if (attempt === 0) {
-      const warm = await warmupAI();
-      console.log("AI warmup:", warm);
-    }
+  for (let i = 1; i <= MAX_TRIES; i++) {
+    // ✅ FIX: maxDataSize Infinity
+    const form = new FormData({ maxDataSize: Infinity });
+    form.append("file", fs.createReadStream(filePath), originalName);
 
     try {
-      const form = new FormData();
-      form.append("file", fs.createReadStream(filePath), originalname);
+      console.log("Sending file to AI:", filePath);
+      console.log("AI_URL:", AI_URL);
 
-      const resp = await axiosAI.post(AI_URL, form, {
-        headers: form.getHeaders()
+      const aiResp = await axios.post(AI_URL, form, {
+        headers: form.getHeaders(),
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 120000 // 120s
       });
 
-      // ak AI vracia 200, je vybavené
-      if (resp.status >= 200 && resp.status < 300) return resp;
-
-      // AI odpovedalo chybou -> toto nie je "stream abort", ale reálna odpoveď AI
-      const err = new Error(`AI returned HTTP ${resp.status}`);
-      err.response = resp;
-      throw err;
-
+      return aiResp.data;
     } catch (err) {
-      console.log(`AI attempt ${attempt + 1} failed:`, err?.message || err);
+      lastErr = err;
+      console.log(`AI attempt ${i} failed:`, err?.message || err);
 
-      // retry len na typické network abort/reset
-      if (attempt < delays.length - 1 && isRetryable(err)) {
+      // malá pauza pred retry
+      if (i < MAX_TRIES) {
         console.log("Retrying AI request…");
-        continue;
+        await new Promise(r => setTimeout(r, 1500));
       }
-      throw err;
     }
   }
+
+  throw lastErr;
 }
 
 // Routes
@@ -156,10 +150,12 @@ app.get("/cases", async (req, res) => {
       return hay.includes(qq);
     });
   }
+
   if (tag) {
     const tt = String(tag).toLowerCase();
     list = list.filter(c => (c.meta?.tags || []).some(t => String(t).toLowerCase() === tt));
   }
+
   res.json({ status: "success", total: list.length, cases: list });
 });
 
@@ -171,44 +167,23 @@ app.get("/case/:id", async (req, res) => {
   res.json({ status: "success", case: found });
 });
 
-// Upload + analyze
+// upload endpoint
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ status: "error", message: "No file uploaded" });
-
-    // meta môže prísť ako JSON string "meta"
-    let meta = { title:"", platform:"", country:"", language:"", tags:[], notes:"" };
-    if (req.body?.meta) {
-      try {
-        const parsed = JSON.parse(req.body.meta);
-        meta = {
-          title: parsed.title || "",
-          platform: parsed.platform || "",
-          country: parsed.country || "",
-          language: parsed.language || "",
-          tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-          notes: parsed.notes || ""
-        };
-      } catch {}
+    if (!req.file) {
+      return res.status(400).json({ status: "error", message: "No file uploaded (field must be 'file')" });
     }
 
-    console.log("File uploaded:", {
-      originalname: req.file.originalname,
-      filename: req.file.filename,
-      path: req.file.path,
-      size: req.file.size,
-      mimetype: req.file.mimetype
-    });
-    console.log("Sending file to AI:", req.file.path);
-    console.log("AI_URL:", AI_URL);
+    console.log("File uploaded:", req.file);
 
-    // 🔥 tu je fix: warmup + retry + vyšší timeout
-    const aiResp = await sendFileToAI(req.file.path, req.file.originalname);
+    const metaFromJson = req.body?.meta ? safeJsonParse(req.body.meta) : null;
+    const meta = normalizeMeta(metaFromJson || req.body);
 
-    const aiData = aiResp.data;
+    const aiData = await sendToAi(req.file.path, req.file.originalname);
 
     const id = makeId();
     const now = new Date().toISOString();
+
     const newCase = {
       id,
       created_at: now,
@@ -221,24 +196,23 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     db.cases.push(newCase);
     await writeCases(db);
 
-    res.json({ status: "success", case_id: id, case: newCase });
-
+    res.json({
+      status: "success",
+      case_id: id,
+      ...aiData,
+      filename: req.file.filename,
+      uploaded_at: now
+    });
   } catch (err) {
-    console.error("UPLOAD/AI ERROR:", err?.message || err);
-
     const aiStatus = err?.response?.status || null;
-    const detail = err?.response?.data || null;
+
+    console.log("UPLOAD/AI ERROR:", err?.message || err);
 
     res.status(500).json({
       status: "error",
       message: "Analyze failed. Check Backend/AI logs.",
       ai_status: aiStatus,
-      detail,
-      debug: {
-        code: err?.code || null,
-        error_message: err?.message || null,
-        ai_url: AI_URL
-      }
+      detail: err?.response?.data || null
     });
   }
 });
