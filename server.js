@@ -104,8 +104,7 @@ app.get("/cases", (req, res) => {
   res.json({ ok: true, items: [] });
 });
 
-import Stripe from "stripe";
-
+const Stripe = require ("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 app.post("/create-checkout-session", async (req, res) => {
@@ -116,7 +115,7 @@ app.post("/create-checkout-session", async (req, res) => {
 
       line_items: [
         {
-          price: "PRICE_ID_TU", // ← sem dáme tvoje price id
+          price: process.env.STRIPE_PRICE_ID, // ← sem dáme tvoje price id
           quantity: 1,
         },
       ],
