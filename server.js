@@ -6,6 +6,9 @@ const multer = require("multer");
 const axios = require("axios");
 const FormData = require("form-data");
 
+const Stripe = require("stripe");
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
 const app = express();
 
 const PORT = process.env.PORT || 5000;
@@ -133,6 +136,30 @@ app.post("/create-checkout-session", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Stripe error" });
+  }
+});
+
+// ================= STRIPE CHECKOUT =================
+
+app.post("/create-checkout-session", async (req, res) => {
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price: process.env.STRIPE_PRICE_ID,
+          quantity: 1,
+        },
+      ],
+      success_url: "https://voicesafe-frontend.onrender.com/?success=true",
+      cancel_url: "https://voicesafe-frontend.onrender.com/?canceled=true",
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("STRIPE ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
