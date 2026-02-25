@@ -5,7 +5,6 @@ const cors = require("cors");
 const multer = require("multer");
 const axios = require("axios");
 const FormData = require("form-data");
-
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -103,9 +102,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 app.get("/cases", (req, res) => {
   res.json({ ok: true, items: [] });
 });
-
-const Stripe = require ("stripe");
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 app.post("/create-checkout-session", async (req, res) => {
   try {
