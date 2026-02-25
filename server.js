@@ -102,7 +102,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 app.get("/cases", (req, res) => {
   res.json({ ok: true, items: [] });
 });
-
 app.post("/create-checkout-session", async (req, res) => {
   try {
 
