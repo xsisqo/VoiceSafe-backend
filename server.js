@@ -6,25 +6,77 @@ const multer = require("multer");
 const axios = require("axios");
 const FormData = require("form-data");
 const Stripe = require("stripe");
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 
 const PORT = process.env.PORT || 5000;
-const AI_URL =
-  process.env.AI_URL ||
-  "https://voicesafe-ai.onrender.com/analyze";
 
+// --------------------
+// URLs / ENV
+// --------------------
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://voicesafe-frontend.onrender.com";
+
+// AI_URL musí byť analyze endpoint (POST)
+const AI_URL =
+  process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze";
+
+// Z AI_URL si vyrátame health endpoint
+const AI_HEALTH_URL = AI_URL.replace(/\/analyze\/?$/i, "/health");
+
+// --------------------
+// Stripe
+// --------------------
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// --------------------
+// Stripe Webhook MUST be before express.json()
+// --------------------
+app.post(
+  "/stripe-webhook",
+  express.raw({ type: "application/json" }),
+  (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.log("❌ Webhook signature failed:", err.message);
+      return res.sendStatus(400);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      console.log("✅ PAYMENT SUCCESS:", session.customer_email || "(no email)");
+      // TODO: uložiť PRO usera do DB
+    }
+
+    res.json({ received: true });
+  }
+);
+
+// --------------------
+// Middlewares
+// --------------------
 app.use(cors());
 app.use(express.json());
 
-// ================= UPLOAD MEMORY =================
+// --------------------
+// Upload (memory)
+// --------------------
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
-// ================= HEALTH =================
+// --------------------
+// Routes
+// --------------------
 app.get("/", (req, res) => {
   res.json({ ok: true, service: "voicesafe-backend" });
 });
@@ -33,16 +85,22 @@ app.get("/health", async (req, res) => {
   let ai_ok = false;
 
   try {
-    const r = await axios.get(
-      "https://voicesafe-ai.onrender.com/health",
-      { timeout: 5000 }
-    );
-    ai_ok = r.data.ok === true;
-  } catch {}
+    const r = await axios.get(AI_HEALTH_URL, { timeout: 7000 });
+    const data = r.data || {};
+
+    // AI môže vracať buď {status:"ok"} alebo {ok:true}
+    ai_ok =
+      (r.status === 200 &&
+        (data.status === "ok" || data.ok === true)) ||
+      false;
+  } catch (e) {
+    ai_ok = false;
+  }
 
   res.json({
     ok: true,
     ai_url: AI_URL,
+    ai_health_url: AI_HEALTH_URL,
     ai_ok,
     db_ok: false, // DB optional
   });
@@ -59,7 +117,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }
 
     const fd = new FormData();
-
     fd.append("file", req.file.buffer, {
       filename: req.file.originalname,
       contentType: req.file.mimetype,
@@ -72,8 +129,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     });
 
     const ai = aiResp.data || {};
-
-    // ✅ DB SAVE SKIPPED (MVP MODE)
 
     res.json({
       ok: true,
@@ -88,12 +143,18 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("UPLOAD ERROR:", e.message);
+    // axios error detail
+    const status = e?.response?.status;
+    const data = e?.response?.data;
+
+    console.error("UPLOAD ERROR:", e.message, status ? `status=${status}` : "");
+    if (data) console.error("AI ERROR DATA:", data);
 
     res.status(500).json({
       ok: false,
       message: "Analyze failed",
       error: String(e.message),
+      status: status || null,
     });
   }
 });
@@ -102,41 +163,16 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 app.get("/cases", (req, res) => {
   res.json({ ok: true, items: [] });
 });
+
+// ================= STRIPE CHECKOUT (SINGLE ROUTE) =================
 app.post("/create-checkout-session", async (req, res) => {
   try {
+    if (!process.env.STRIPE_PRICE_ID) {
+      return res.status(500).json({ error: "Missing STRIPE_PRICE_ID" });
+    }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+    const trialDays = Number(process.env.STRIPE_TRIAL_DAYS || 7);
 
-      line_items: [
-        {
-          price: process.env.STRIPE_PRICE_ID, // ← sem dáme tvoje price id
-          quantity: 1,
-        },
-      ],
-
-      subscription_data: {
-        trial_period_days: 7, // ⭐ TU JE TRIAL
-      },
-
-      success_url:
-        "https://voicesafe-frontend.onrender.com/success",
-      cancel_url:
-        "https://voicesafe-frontend.onrender.com/",
-    });
-
-    res.json({ url: session.url });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Stripe error" });
-  }
-});
-
-// ================= STRIPE CHECKOUT =================
-
-app.post("/create-checkout-session", async (req, res) => {
-  try {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
@@ -146,18 +182,25 @@ app.post("/create-checkout-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      success_url: "https://voicesafe-frontend.onrender.com/?success=true",
-      cancel_url: "https://voicesafe-frontend.onrender.com/?canceled=true",
+      // Trial (ak chceš vypnúť, daj STRIPE_TRIAL_DAYS=0)
+      ...(trialDays > 0
+        ? { subscription_data: { trial_period_days: trialDays } }
+        : {}),
+
+      success_url: `${FRONTEND_URL}/success`,
+      cancel_url: `${FRONTEND_URL}/`,
     });
 
     res.json({ url: session.url });
   } catch (err) {
     console.error("STRIPE ERROR:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || "Stripe error" });
   }
 });
 
 // ================= START =================
 app.listen(PORT, () => {
   console.log(`voicesafe-backend running on ${PORT}`);
+  console.log("AI_URL:", AI_URL);
+  console.log("AI_HEALTH_URL:", AI_HEALTH_URL);
 });
