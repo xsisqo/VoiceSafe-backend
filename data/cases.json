@@ -1,0 +1,285 @@
+{
+  "cases": [
+    {
+      "id": "78b68c942c1434a6ee7f62c5",
+      "created_at": "2026-02-22T10:37:24.785Z",
+      "updated_at": "2026-02-22T10:37:24.785Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771756643271-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-22T10:37:24.785Z"
+      }
+    },
+    {
+      "id": "64bdeff2768b4e35c71b0ec3",
+      "created_at": "2026-02-22T11:24:19.249Z",
+      "updated_at": "2026-02-22T11:24:19.249Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771759456911-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-22T11:24:19.249Z"
+      }
+    },
+    {
+      "id": "633c8e7495e28ed84da28f6f",
+      "created_at": "2026-02-23T01:11:55.141Z",
+      "updated_at": "2026-02-23T01:11:55.141Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771809115108-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T01:11:55.141Z"
+      }
+    },
+    {
+      "id": "3e93eb10581862cb0aabfb34",
+      "created_at": "2026-02-23T03:31:20.541Z",
+      "updated_at": "2026-02-23T03:31:20.541Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T03:31:20.541Z",
+        "stored_filename": "1771817480504-test.mp3",
+        "original_filename": "test.mp3"
+      }
+    },
+    {
+      "id": "b65721f7043868fa7dc76012",
+      "created_at": "2026-02-23T03:32:30.340Z",
+      "updated_at": "2026-02-23T03:32:30.340Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T03:32:30.340Z",
+        "stored_filename": "1771817550304-test.mp3",
+        "original_filename": "test.mp3"
+      }
+    },
+    {
+      "id": "91e5caee25860b74013b0ef4",
+      "created_at": "2026-02-23T03:53:03.355Z",
+      "updated_at": "2026-02-23T03:53:03.355Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771818783305-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T03:53:03.353034Z"
+      }
+    },
+    {
+      "id": "85bd1c10316c4bd652a14571",
+      "created_at": "2026-02-23T03:53:41.583Z",
+      "updated_at": "2026-02-23T03:53:41.583Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771818821569-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T03:53:41.583486Z"
+      }
+    },
+    {
+      "id": "1e4800b0995530a97ca7b263",
+      "created_at": "2026-02-23T03:55:23.504Z",
+      "updated_at": "2026-02-23T03:55:23.504Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771818923480-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T03:55:23.504359Z"
+      }
+    },
+    {
+      "id": "694b1d3fff6db7d884518b30",
+      "created_at": "2026-02-23T04:32:19.006Z",
+      "updated_at": "2026-02-23T04:32:19.006Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771821138967-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T04:32:19.019265Z"
+      }
+    },
+    {
+      "id": "8bc5376913bd8bae6fad6226",
+      "created_at": "2026-02-23T06:14:20.753Z",
+      "updated_at": "2026-02-23T06:14:20.753Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771827260690-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T06:14:20.753Z"
+      }
+    },
+    {
+      "id": "490b2110c3b3dc58c677b8cb",
+      "created_at": "2026-02-23T09:48:06.043Z",
+      "updated_at": "2026-02-23T09:48:06.043Z",
+      "meta": {
+        "title": "",
+        "platform": "",
+        "country": "",
+        "language": "",
+        "tags": [],
+        "notes": ""
+      },
+      "fingerprint": {
+        "file_sha256": "cbe95549b8fc8bff2d90194d1b85f89a56c305c2083977e6f466f5e3fdbd24dc",
+        "simhash_128": "11000001001101000011011001011101110000010011010000110110010111011100000100110100001101100101110111000001001101000011011001011101",
+        "sample_rate": 8000,
+        "duration_s": 20,
+        "normalized": {
+          "wav_mono_8k": true
+        }
+      },
+      "voice_match": {
+        "match_risk": "LOW",
+        "matches": []
+      },
+      "data": {
+        "ai_voice_prob": 15,
+        "filename": "1771840081447-test.mp3",
+        "flags": [],
+        "message": "File received",
+        "scam_score": 42,
+        "status": "success",
+        "stress_level": 25,
+        "summary": "No strong red flags detected in this sample, but stay cautious.",
+        "uploaded_at": "2026-02-23T09:48:06.043Z"
+      }
+    }
+  ]
+}
