@@ -64,36 +64,18 @@ app.post(
 // ===============================
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-
-      const allowed = new Set([
-        FRONTEND_URL,
-        "https://voicesafe.ai",
-        "https://www.voicesafe.ai",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-      ]);
-
-      if (allowed.has(origin)) return cb(null, true);
-
-      console.log("❌ CORS BLOCK:", origin);
-      return cb(new Error("Not allowed by CORS"));
-    },
-
-    methods: ["GET", "POST", "OPTIONS"],
-
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "x-request-id",
-      "stripe-signature",
+    origin: [
+      FRONTEND_URL,
+      "https://voicesafe.ai",
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
     ],
-
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-request-id"],
     exposedHeaders: ["x-request-id"],
     credentials: false,
-    maxAge: 86400,
   })
 );
 
