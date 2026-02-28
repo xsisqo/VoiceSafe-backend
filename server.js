@@ -9,6 +9,7 @@ const axios = require("axios");
 const FormData = require("form-data");
 const crypto = require("crypto");
 const Stripe = require("stripe");
+const shareRoutes = require("./routes/share");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -104,6 +105,8 @@ app.use((req, res, next) => {
 
   next();
 });
+
+app.use(shareRoutes);
 
 // ===============================
 // FILE UPLOAD
