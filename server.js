@@ -10,8 +10,23 @@ const FormData = require("form-data");
 const crypto = require("crypto");
 const Stripe = require("stripe");
 const shareRoutes = require("./routes/share");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
+const CASES_PATH = path.join(__dirname, "cases.json");
+
+function readCases() {
+  try {
+    return JSON.parse(fs.readFileSync(CASES_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeCases(data) {
+  fs.writeFileSync(CASES_PATH, JSON.stringify(data, null, 2), "utf8");
+}
 const PORT = process.env.PORT || 5000;
 
 // ===============================
@@ -146,6 +161,13 @@ app.get("/health", async (req, res) => {
   });
 });
 
+app.get("/case/:id", (req, res) => {
+  const all = readCases();
+  const c = all[req.params.id];
+  if (!c) return res.status(404).json({ ok: false, message: "Case not found" });
+  return res.json({ ok: true, case: c });
+});
+
 // ===============================
 // 🚀 UPLOAD + ANALYZE
 // ===============================
@@ -183,22 +205,39 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         message: "AI analyze failed",
         ai_status: aiResp.status,
       });
+
     }
 
-    res.json({
-      ok: true,
-      aiResult: aiResp.data,
-      debug: { fileHash },
-    });
-  } catch (e) {
-    console.error(`[${rid}] ERROR`, e.message);
+    const caseId = crypto.randomBytes(8).toString("hex");
 
-    res.status(500).json({
-      ok: false,
-      message: "Analyze failed",
-      error: e.message,
-    });
-  }
+const record = {
+  id: caseId,
+  createdAt: new Date().toISOString(),
+  fileHash,
+  aiResult: aiResp.data,
+  meta: req.body || {},
+};
+
+const all = readCases();
+all[caseId] = record;
+writeCases(all);
+
+return res.json({
+  ok: true,
+  caseId, // ✅ toto potrebuje frontend
+  aiResult: aiResp.data,
+  debug: { fileHash },
+});
+
+} catch (e) {
+  console.error(`[${rid}] ERROR`, e.message);
+
+  return res.status(500).json({
+    ok: false,
+    message: "Analyze failed",
+    error: e.message,
+  });
+}
 });
 
 // ===============================
@@ -226,4 +265,5 @@ app.post("/create-checkout-session", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 VoiceSafe backend running on ${PORT}`);
   console.log("AI_URL:", AI_URL);
+  console.log("FRONTEND_URL:", FRONTEND_URL);
 });
