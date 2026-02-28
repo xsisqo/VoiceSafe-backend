@@ -5,6 +5,16 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
+
+// ============================
+// Case ID generator
+// ============================
+function generateCaseId() {
+  const year = new Date().getUTCFullYear();
+  const rand = Math.floor(100000 + Math.random() * 900000);
+  return `VS-${year}-${rand}`;
+}
+
 const axios = require("axios");
 const FormData = require("form-data");
 const crypto = require("crypto");
