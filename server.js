@@ -218,7 +218,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     }
 
-    const caseId = crypto.randomBytes(8).toString("hex");
+const caseId = generateCaseId();  
 
 const record = {
   id: caseId,
@@ -234,6 +234,7 @@ writeCases(all);
 
 return res.json({
   ok: true,
+  case_id: caseId,
   caseId, // ✅ toto potrebuje frontend
   aiResult: aiResp.data,
   debug: { fileHash },
