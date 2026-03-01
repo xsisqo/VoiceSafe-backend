@@ -19,6 +19,14 @@ const ffmpegPath = require("ffmpeg-static");
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 // ===============================
+// AUDIO NORMALIZATION (GLOBAL FORMAT SUPPORT)
+// ===============================
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("ffmpeg-static");
+
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+// ===============================
 // INIT
 // ===============================
 
@@ -128,6 +136,32 @@ async function safeUnlink(file) {
   } catch {}
 }
 
+// Convert ANY audio → WAV (AI safe)
+async function normalizeAudio(buffer) {
+  const input = path.join(__dirname, "tmp_in_" + Date.now());
+  const output = path.join(__dirname, "tmp_out_" + Date.now() + ".wav");
+
+  fs.writeFileSync(input, buffer);
+
+  return new Promise((resolve, reject) => {
+    ffmpeg(input)
+      .audioChannels(1)
+      .audioFrequency(16000)
+      .format("wav")
+      .on("end", () => {
+        const data = fs.readFileSync(output);
+        fs.unlinkSync(input);
+        fs.unlinkSync(output);
+        resolve(data);
+      })
+      .on("error", (err) => {
+        fs.unlinkSync(input);
+        reject(err);
+      })
+      .save(output);
+  });
+}
+
 // ===============================
 // ROUTES
 // ===============================
@@ -157,6 +191,15 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ ok: false, message: "Missing file" });
     }
 
+// Accept ANY audio/video container from mobile apps
+if (!req.file.mimetype.includes("audio") &&
+    !req.file.mimetype.includes("video")) {
+  return res.status(400).json({
+    ok:false,
+    message:"Unsupported file type"
+  });
+}
+
     const fileHash = sha256(req.file.buffer);
 
     console.log(
@@ -172,11 +215,14 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     );
 
     const inputPath = baseTmp;
-    const wavPath = baseTmp + ".wav";
+const wavPath = baseTmp + ".wav";
 
-    fs.writeFileSync(inputPath, req.file.buffer);
+// 🔍 DEBUG — zistíme čo mobil reálne posiela
+console.log("MIME:", req.file.mimetype);
 
-    await convertToWav(inputPath, wavPath);
+fs.writeFileSync(inputPath, req.file.buffer);
+
+await convertToWav(inputPath, wavPath);
 
     const fd = new FormData();
     fd.append("file", fs.createReadStream(wavPath), {
