@@ -219,6 +219,7 @@ const wavPath = baseTmp + ".wav";
 
 // 🔍 DEBUG — zistíme čo mobil reálne posiela
 console.log("MIME:", req.file.mimetype);
+console.log("SIZE:", req.file.size);
 
 fs.writeFileSync(inputPath, req.file.buffer);
 
