@@ -19,14 +19,6 @@ const ffmpegPath = require("ffmpeg-static");
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 // ===============================
-// AUDIO NORMALIZATION (GLOBAL FORMAT SUPPORT)
-// ===============================
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegPath = require("ffmpeg-static");
-
-ffmpeg.setFfmpegPath(ffmpegPath);
-
-// ===============================
 // INIT
 // ===============================
 
