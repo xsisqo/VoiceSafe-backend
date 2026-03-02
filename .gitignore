@@ -1,8 +1,25 @@
-node_modules
+# Node
+node_modules/
+
+# Env
 .env
 .env.*
-npm-debug.log
-.DS_Store
-coverage
-logs
+
+# Logs
+logs/
 *.log
+npm-debug.log*
+.DS_Store
+
+# Runtime uploads
+uploads/
+uploads_ai/
+
+# Database files (SQLite)
+*.db
+*.db-wal
+*.db-shm
+
+# Temp
+tmp/
+temp/
