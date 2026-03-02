@@ -1,7 +1,8 @@
 import requests
 
 url = "https://voicesafe-backend-1.onrender.com/upload"
-file_path = "test.mp3"  # tvoj audio súbor
+
+file_path = "test.mp3"  # názov tvojho audio súboru
 
 with open(file_path, "rb") as f:
     files = {"audio": f}
