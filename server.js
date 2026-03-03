@@ -58,7 +58,7 @@ app.post("/upload", upload.single("audio"), async (req, res) => {
 
     // 1) pošli súbor do AI
     const form = new FormData();
-    form.append("audio", fs.createReadStream(filePath), {
+    form.append("file", fs.createReadStream(filePath), {
       filename: req.file.originalname,
       contentType: req.file.mimetype || "audio/mpeg",
     });
