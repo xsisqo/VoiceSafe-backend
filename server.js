@@ -6,6 +6,7 @@
 // ✅ send to AI (/analyze)
 // ✅ store case in Postgres (DATABASE_URL)
 // ✅ basic endpoints: /health, /upload, /cases, /cases/:case_id
+// ✅ alias endpoint: /case/:case_id (so your curl / share links work)
 // ✅ fixes: ERR_HTTP_HEADERS_SENT (double response guard)
 
 const express = require("express");
@@ -27,13 +28,12 @@ const AI_URL = process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze"
 const DATABASE_URL = process.env.DATABASE_URL;
 
 // On Render, you often need SSL for postgres
-const pool =
-  DATABASE_URL
-    ? new Pool({
-        connectionString: DATABASE_URL,
-        ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
-      })
-    : null;
+const pool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
+    })
+  : null;
 
 // ===== CORS =====
 app.use(
@@ -48,6 +48,7 @@ app.use(express.json({ limit: "2mb" }));
 
 // ===== Health =====
 app.get("/", (req, res) => res.json({ ok: true, service: "voicesafe-backend" }));
+
 app.get("/health", async (req, res) => {
   try {
     if (!pool) return res.json({ ok: true, db: false, note: "DATABASE_URL missing" });
@@ -75,6 +76,19 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
 const upload = multer({ storage });
+
+// Accept BOTH field names: "audio" (frontend) and "file" (some tests)
+const uploadAnyAudio = upload.fields([
+  { name: "audio", maxCount: 1 },
+  { name: "file", maxCount: 1 },
+]);
+
+function pickUploadedFile(req) {
+  // multer.fields puts files into req.files
+  const a = req.files?.audio?.[0];
+  const f = req.files?.file?.[0];
+  return a || f || null;
+}
 
 // ===== Helpers =====
 function safeUnlink(p) {
@@ -191,14 +205,30 @@ app.get("/cases/:case_id", async (req, res) => {
   }
 });
 
+// ✅ Alias: so /case/:id also works (your curl used /case)
+app.get("/case/:case_id", async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
+
+    const case_id = req.params.case_id;
+    const r = await pool.query(`SELECT * FROM cases WHERE case_id=$1 LIMIT 1`, [case_id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: "Not found" });
+
+    return res.json({ ok: true, item: r.rows[0] });
+  } catch (e) {
+    if (res.headersSent) return;
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ===== Upload + Analyze (MAIN) =====
-// Frontend sends: form.append("audio", file) OR "file" is also accepted
-app.post("/upload", upload.single("audio"), async (req, res) => {
+// Frontend sends: form.append("audio", file) OR some tests send "file"
+app.post("/upload", uploadAnyAudio, async (req, res) => {
   let inputPath = null;
   let wavPath = null;
 
   try {
-    const f = req.file;
+    const f = pickUploadedFile(req);
     if (!f) return res.status(400).json({ status: "error", message: "No file uploaded" });
 
     inputPath = f.path;
@@ -281,7 +311,7 @@ app.post("/upload", upload.single("audio"), async (req, res) => {
       detail: err?.response?.data || err.message,
     });
   } finally {
-    // Clean temp wav; keep original upload (optional) — you can delete it too if you want.
+    // Clean temp wav; keep original upload (optional)
     safeUnlink(wavPath);
     // If you want FULL privacy: uncomment next line to delete original upload too
     // safeUnlink(inputPath);
