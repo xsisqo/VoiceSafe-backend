@@ -1,13 +1,14 @@
 // backend/server.js
-// VoiceSafe Backend — Enterprise (stable)
+// VoiceSafe Backend — Enterprise (stable) + Google Login (GSI)
 // ✅ audio + video upload
-// ✅ video -> extract audio (ffmpeg)
 // ✅ normalize -> WAV mono 16kHz
 // ✅ send to AI (/analyze)
 // ✅ store case in Postgres (DATABASE_URL)
-// ✅ basic endpoints: /health, /upload, /cases, /cases/:case_id
-// ✅ alias endpoint: /case/:case_id (so your curl / share links work)
-// ✅ fixes: ERR_HTTP_HEADERS_SENT (double response guard)
+// ✅ endpoints: /health, /upload, /cases, /cases/:case_id
+// ✅ alias: /case/:case_id
+// ✅ Google login: POST /auth/google (GSI id_token -> verify -> app JWT)
+// ✅ /me returns JWT payload
+// ✅ fixes: ERR_HTTP_HEADERS_SENT guard
 
 const express = require("express");
 const cors = require("cors");
@@ -20,12 +21,21 @@ const { spawn } = require("child_process");
 const crypto = require("crypto");
 const { Pool } = require("pg");
 
+// NEW:
+const { OAuth2Client } = require("google-auth-library");
+const jwt = require("jsonwebtoken");
+
 const app = express();
 
 // ===== Config =====
 const PORT = process.env.PORT || 5000;
 const AI_URL = process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze";
 const DATABASE_URL = process.env.DATABASE_URL;
+
+// NEW (Render ENV):
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const APP_JWT_SECRET = process.env.APP_JWT_SECRET || ""; // MUST set in Render
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 // On Render, you often need SSL for postgres
 const pool = DATABASE_URL
@@ -46,6 +56,36 @@ app.use(
 
 app.use(express.json({ limit: "2mb" }));
 
+// ===== Auth helpers (NEW) =====
+function getBearer(req) {
+  const h = req.header("authorization") || "";
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : "";
+}
+
+function authOptional(req, _res, next) {
+  try {
+    const token = getBearer(req);
+    if (!token || !APP_JWT_SECRET) return next();
+    req.user = jwt.verify(token, APP_JWT_SECRET); // { sub,email,name,picture, ... }
+    return next();
+  } catch {
+    return next();
+  }
+}
+
+function authRequired(req, res, next) {
+  const token = getBearer(req);
+  if (!token) return res.status(401).json({ ok: false, error: "Missing token" });
+  if (!APP_JWT_SECRET) return res.status(500).json({ ok: false, error: "APP_JWT_SECRET missing" });
+  try {
+    req.user = jwt.verify(token, APP_JWT_SECRET);
+    return next();
+  } catch {
+    return res.status(401).json({ ok: false, error: "Invalid token" });
+  }
+}
+
 // ===== Health =====
 app.get("/", (req, res) => res.json({ ok: true, service: "voicesafe-backend" }));
 
@@ -53,10 +93,52 @@ app.get("/health", async (req, res) => {
   try {
     if (!pool) return res.json({ ok: true, db: false, note: "DATABASE_URL missing" });
     await pool.query("SELECT 1");
-    return res.json({ ok: true, db: true });
+    return res.json({
+      ok: true,
+      db: true,
+      google: !!GOOGLE_CLIENT_ID,
+      jwt: !!APP_JWT_SECRET,
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, db: false, error: e.message });
   }
+});
+
+// ===== Google Login (NEW) =====
+// Frontend sends: { id_token: <GSI response.credential> }
+app.post("/auth/google", async (req, res) => {
+  try {
+    if (!googleClient) return res.status(500).json({ ok: false, error: "GOOGLE_CLIENT_ID missing" });
+    if (!APP_JWT_SECRET) return res.status(500).json({ ok: false, error: "APP_JWT_SECRET missing" });
+
+    const { id_token } = req.body || {};
+    if (!id_token) return res.status(400).json({ ok: false, error: "id_token missing" });
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken: id_token,
+      audience: GOOGLE_CLIENT_ID,
+    });
+
+    const p = ticket.getPayload() || {};
+    const user = {
+      sub: String(p.sub || ""),
+      email: String(p.email || ""),
+      name: String(p.name || ""),
+      picture: String(p.picture || ""),
+    };
+
+    if (!user.sub) return res.status(401).json({ ok: false, error: "Invalid Google token" });
+
+    const token = jwt.sign(user, APP_JWT_SECRET, { expiresIn: "30d" });
+    return res.json({ ok: true, user, token });
+  } catch (e) {
+    return res.status(401).json({ ok: false, error: e.message });
+  }
+});
+
+// NEW: /me
+app.get("/me", authRequired, async (req, res) => {
+  return res.json({ ok: true, user: req.user });
 });
 
 // ===== Uploads folder =====
@@ -84,7 +166,6 @@ const uploadAnyAudio = upload.fields([
 ]);
 
 function pickUploadedFile(req) {
-  // multer.fields puts files into req.files
   const a = req.files?.audio?.[0];
   const f = req.files?.file?.[0];
   return a || f || null;
@@ -114,15 +195,12 @@ function makeCaseId() {
 }
 
 function normalizeAiResult(ai) {
-  // Accept both formats:
-  // ai.scores.* OR ai.* flat
   const scores = ai?.scores || ai || {};
   const scam_score = Number(scores.scam_score ?? scores.scamScore ?? 0);
   const ai_probability = Number(scores.ai_probability ?? scores.aiProbability ?? 0);
   const stress_level = Number(scores.stress_level ?? scores.stressLevel ?? 0);
   const risk_level = String(scores.risk_level ?? scores.riskLevel ?? "UNKNOWN");
   const confidence = Number(scores.confidence ?? 0);
-
   return { scam_score, ai_probability, stress_level, risk_level, confidence };
 }
 
@@ -205,7 +283,7 @@ app.get("/cases/:case_id", async (req, res) => {
   }
 });
 
-// ✅ Alias: so /case/:id also works (your curl used /case)
+// Alias: /case/:id
 app.get("/case/:case_id", async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
@@ -222,8 +300,8 @@ app.get("/case/:case_id", async (req, res) => {
 });
 
 // ===== Upload + Analyze (MAIN) =====
-// Frontend sends: form.append("audio", file) OR some tests send "file"
-app.post("/upload", uploadAnyAudio, async (req, res) => {
+// authOptional = token môže byť, nemusí
+app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
   let inputPath = null;
   let wavPath = null;
 
@@ -235,8 +313,6 @@ app.post("/upload", uploadAnyAudio, async (req, res) => {
 
     // 1) Convert to WAV mono 16kHz via ffmpeg
     wavPath = path.join(tmpDir, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.wav`);
-
-    // ffmpeg -i input -ac 1 -ar 16000 -vn -c:a pcm_s16le out.wav
     await runFfmpeg(["-y", "-i", inputPath, "-ac", "1", "-ar", "16000", "-vn", "-c:a", "pcm_s16le", wavPath]);
 
     // 2) Send to AI
@@ -264,6 +340,10 @@ app.post("/upload", uploadAnyAudio, async (req, res) => {
 
     // 3) Store case
     const case_id = makeCaseId();
+
+    // (voliteľné) user info do ai_json — aby si to mal v DB už teraz
+    const ai_json = { ...ai, _user: req.user || null };
+
     if (pool) {
       await pool.query(
         `INSERT INTO cases
@@ -286,12 +366,11 @@ app.post("/upload", uploadAnyAudio, async (req, res) => {
           normalized.stress_level,
           normalized.risk_level,
           normalized.confidence,
-          ai,
+          ai_json,
         ]
       );
     }
 
-    // 4) Respond ONCE
     return res.json({
       status: "success",
       message: "File uploaded + normalized + analyzed",
@@ -301,8 +380,6 @@ app.post("/upload", uploadAnyAudio, async (req, res) => {
     });
   } catch (err) {
     console.error("UPLOAD/ANALYZE ERROR:", err?.response?.data || err.message);
-
-    // ✅ Fix for ERR_HTTP_HEADERS_SENT (never respond twice)
     if (res.headersSent) return;
 
     return res.status(500).json({
@@ -311,10 +388,7 @@ app.post("/upload", uploadAnyAudio, async (req, res) => {
       detail: err?.response?.data || err.message,
     });
   } finally {
-    // Clean temp wav; keep original upload (optional)
     safeUnlink(wavPath);
-    // If you want FULL privacy: uncomment next line to delete original upload too
-    // safeUnlink(inputPath);
   }
 });
 
@@ -323,4 +397,6 @@ app.listen(PORT, () => {
   console.log(`VoiceSafe backend running on port ${PORT}`);
   console.log(`AI_URL: ${AI_URL}`);
   console.log(`DB: ${DATABASE_URL ? "enabled" : "disabled (DATABASE_URL missing)"}`);
+  console.log(`Google: ${GOOGLE_CLIENT_ID ? "enabled" : "disabled (GOOGLE_CLIENT_ID missing)"}`);
+  console.log(`JWT: ${APP_JWT_SECRET ? "enabled" : "disabled (APP_JWT_SECRET missing)"}`);
 });
