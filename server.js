@@ -1,14 +1,14 @@
 // backend/server.js
-// VoiceSafe Backend — Enterprise (stable) + Google Login (GSI)
+// VoiceSafe Backend — Enterprise (stable + Confidence Engine v1 + optional stats)
 // ✅ audio + video upload
+// ✅ video -> extract audio (ffmpeg)
 // ✅ normalize -> WAV mono 16kHz
 // ✅ send to AI (/analyze)
 // ✅ store case in Postgres (DATABASE_URL)
-// ✅ endpoints: /health, /upload, /cases, /cases/:case_id
-// ✅ alias: /case/:case_id
-// ✅ Google login: POST /auth/google (GSI id_token -> verify -> app JWT)
-// ✅ /me returns JWT payload
-// ✅ fixes: ERR_HTTP_HEADERS_SENT guard
+// ✅ basic endpoints: /health, /upload, /cases, /cases/:case_id
+// ✅ alias endpoint: /case/:case_id
+// ✅ Confidence Engine v1 computed from: scam_score, stress_level, ai_probability
+// ✅ optional /stats for investor dashboard
 
 const express = require("express");
 const cors = require("cors");
@@ -21,21 +21,12 @@ const { spawn } = require("child_process");
 const crypto = require("crypto");
 const { Pool } = require("pg");
 
-// NEW:
-const { OAuth2Client } = require("google-auth-library");
-const jwt = require("jsonwebtoken");
-
 const app = express();
 
 // ===== Config =====
 const PORT = process.env.PORT || 5000;
 const AI_URL = process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze";
 const DATABASE_URL = process.env.DATABASE_URL;
-
-// NEW (Render ENV):
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const APP_JWT_SECRET = process.env.APP_JWT_SECRET || ""; // MUST set in Render
-const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 // On Render, you often need SSL for postgres
 const pool = DATABASE_URL
@@ -56,36 +47,6 @@ app.use(
 
 app.use(express.json({ limit: "2mb" }));
 
-// ===== Auth helpers (NEW) =====
-function getBearer(req) {
-  const h = req.header("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : "";
-}
-
-function authOptional(req, _res, next) {
-  try {
-    const token = getBearer(req);
-    if (!token || !APP_JWT_SECRET) return next();
-    req.user = jwt.verify(token, APP_JWT_SECRET); // { sub,email,name,picture, ... }
-    return next();
-  } catch {
-    return next();
-  }
-}
-
-function authRequired(req, res, next) {
-  const token = getBearer(req);
-  if (!token) return res.status(401).json({ ok: false, error: "Missing token" });
-  if (!APP_JWT_SECRET) return res.status(500).json({ ok: false, error: "APP_JWT_SECRET missing" });
-  try {
-    req.user = jwt.verify(token, APP_JWT_SECRET);
-    return next();
-  } catch {
-    return res.status(401).json({ ok: false, error: "Invalid token" });
-  }
-}
-
 // ===== Health =====
 app.get("/", (req, res) => res.json({ ok: true, service: "voicesafe-backend" }));
 
@@ -93,52 +54,10 @@ app.get("/health", async (req, res) => {
   try {
     if (!pool) return res.json({ ok: true, db: false, note: "DATABASE_URL missing" });
     await pool.query("SELECT 1");
-    return res.json({
-      ok: true,
-      db: true,
-      google: !!GOOGLE_CLIENT_ID,
-      jwt: !!APP_JWT_SECRET,
-    });
+    return res.json({ ok: true, db: true });
   } catch (e) {
     return res.status(500).json({ ok: false, db: false, error: e.message });
   }
-});
-
-// ===== Google Login (NEW) =====
-// Frontend sends: { id_token: <GSI response.credential> }
-app.post("/auth/google", async (req, res) => {
-  try {
-    if (!googleClient) return res.status(500).json({ ok: false, error: "GOOGLE_CLIENT_ID missing" });
-    if (!APP_JWT_SECRET) return res.status(500).json({ ok: false, error: "APP_JWT_SECRET missing" });
-
-    const { id_token } = req.body || {};
-    if (!id_token) return res.status(400).json({ ok: false, error: "id_token missing" });
-
-    const ticket = await googleClient.verifyIdToken({
-      idToken: id_token,
-      audience: GOOGLE_CLIENT_ID,
-    });
-
-    const p = ticket.getPayload() || {};
-    const user = {
-      sub: String(p.sub || ""),
-      email: String(p.email || ""),
-      name: String(p.name || ""),
-      picture: String(p.picture || ""),
-    };
-
-    if (!user.sub) return res.status(401).json({ ok: false, error: "Invalid Google token" });
-
-    const token = jwt.sign(user, APP_JWT_SECRET, { expiresIn: "30d" });
-    return res.json({ ok: true, user, token });
-  } catch (e) {
-    return res.status(401).json({ ok: false, error: e.message });
-  }
-});
-
-// NEW: /me
-app.get("/me", authRequired, async (req, res) => {
-  return res.json({ ok: true, user: req.user });
 });
 
 // ===== Uploads folder =====
@@ -149,7 +68,6 @@ for (const d of [uploadsDir, tmpDir]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 
-// optional static access
 app.use("/uploads", express.static(uploadsDir));
 
 // ===== Multer =====
@@ -159,7 +77,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Accept BOTH field names: "audio" (frontend) and "file" (some tests)
 const uploadAnyAudio = upload.fields([
   { name: "audio", maxCount: 1 },
   { name: "file", maxCount: 1 },
@@ -194,6 +111,19 @@ function makeCaseId() {
   return `VS-${crypto.randomBytes(6).toString("hex")}-${Date.now()}`;
 }
 
+function clamp(n, a, b) {
+  n = Number(n);
+  if (Number.isNaN(n)) return a;
+  return Math.max(a, Math.min(b, n));
+}
+
+function as01(x) {
+  const n = Number(x);
+  if (Number.isNaN(n)) return null;
+  if (n <= 1) return clamp(n, 0, 1);
+  return clamp(n / 100, 0, 1);
+}
+
 function normalizeAiResult(ai) {
   const scores = ai?.scores || ai || {};
   const scam_score = Number(scores.scam_score ?? scores.scamScore ?? 0);
@@ -202,6 +132,20 @@ function normalizeAiResult(ai) {
   const risk_level = String(scores.risk_level ?? scores.riskLevel ?? "UNKNOWN");
   const confidence = Number(scores.confidence ?? 0);
   return { scam_score, ai_probability, stress_level, risk_level, confidence };
+}
+
+// ===== Confidence Engine v1 (BLOCK 4) =====
+function computeConfidenceV1({ scam_score, stress_level, ai_probability }) {
+  const scam = as01(scam_score);
+  const stress = as01(stress_level);
+  const aiP = as01(ai_probability);
+
+  const s = scam ?? 0.5;
+  const st = stress ?? 0.5;
+  const a = aiP ?? 0.5;
+
+  const raw = 0.15 + 0.55 * s + 0.25 * st + 0.05 * (1 - a);
+  return clamp(raw, 0.05, 0.98);
 }
 
 // ===== DB init =====
@@ -283,7 +227,6 @@ app.get("/cases/:case_id", async (req, res) => {
   }
 });
 
-// Alias: /case/:id
 app.get("/case/:case_id", async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
@@ -299,9 +242,32 @@ app.get("/case/:case_id", async (req, res) => {
   }
 });
 
-// ===== Upload + Analyze (MAIN) =====
-// authOptional = token môže byť, nemusí
-app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
+// ===== Optional /stats =====
+app.get("/stats", async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
+
+    const total = await pool.query(`SELECT COUNT(*)::int AS c FROM cases`);
+    const high7d = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM cases
+       WHERE created_at >= NOW() - INTERVAL '7 days'
+         AND (risk_level ILIKE 'HIGH' OR risk_level ILIKE 'H')`
+    );
+    const avgConf = await pool.query(`SELECT COALESCE(AVG(confidence), 0)::float AS v FROM cases`);
+    return res.json({
+      total_cases: total.rows[0].c,
+      high_risk_7d: high7d.rows[0].c,
+      avg_confidence: avgConf.rows[0].v,
+      median_latency_ms: null,
+    });
+  } catch (e) {
+    if (res.headersSent) return;
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ===== Upload + Analyze =====
+app.post("/upload", uploadAnyAudio, async (req, res) => {
   let inputPath = null;
   let wavPath = null;
 
@@ -311,23 +277,14 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
 
     inputPath = f.path;
 
-    // 1) Convert to WAV mono 16kHz via ffmpeg
     wavPath = path.join(tmpDir, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.wav`);
     await runFfmpeg(["-y", "-i", inputPath, "-ac", "1", "-ar", "16000", "-vn", "-c:a", "pcm_s16le", wavPath]);
 
-    // 2) Send to AI
     const form = new FormData();
     form.append("file", fs.createReadStream(wavPath), {
       filename: "audio.wav",
       contentType: "audio/wav",
     });
-
-    const fields = ["title", "platform", "country", "language", "tags", "notes"];
-    for (const k of fields) {
-      if (req.body && typeof req.body[k] === "string" && req.body[k].trim()) {
-        form.append(k, req.body[k].trim());
-      }
-    }
 
     const aiResp = await axios.post(AI_URL, form, {
       headers: form.getHeaders(),
@@ -338,50 +295,49 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
     const ai = aiResp.data;
     const normalized = normalizeAiResult(ai);
 
-    // 3) Store case
-    const case_id = makeCaseId();
+    let conf01 = as01(normalized.confidence);
+    if (conf01 === null || conf01 === 0) conf01 = computeConfidenceV1(normalized);
 
-    // (voliteľné) user info do ai_json — aby si to mal v DB už teraz
-    const ai_json = { ...ai, _user: req.user || null };
+    const case_id = makeCaseId();
 
     if (pool) {
       await pool.query(
         `INSERT INTO cases
-         (case_id, filename, mime, title, platform, country, language, tags, notes,
+         (case_id, filename, mime,
           scam_score, ai_probability, stress_level, risk_level, confidence, ai_json)
-         VALUES
-         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           case_id,
           f.filename,
           f.mimetype || "",
-          (req.body?.title || "").trim(),
-          (req.body?.platform || "").trim(),
-          (req.body?.country || "").trim(),
-          (req.body?.language || "").trim(),
-          (req.body?.tags || "").trim(),
-          (req.body?.notes || "").trim(),
           normalized.scam_score,
           normalized.ai_probability,
           normalized.stress_level,
           normalized.risk_level,
-          normalized.confidence,
-          ai_json,
+          conf01,
+          ai,
         ]
       );
     }
+
+    const out = {
+      ...ai,
+      scores: {
+        ...(ai?.scores || {}),
+        confidence: conf01,
+      },
+    };
 
     return res.json({
       status: "success",
       message: "File uploaded + normalized + analyzed",
       case_id,
       filename: f.filename,
-      ai,
+      ai: out,
     });
   } catch (err) {
     console.error("UPLOAD/ANALYZE ERROR:", err?.response?.data || err.message);
     if (res.headersSent) return;
-
     return res.status(500).json({
       status: "error",
       message: "Analyze failed",
@@ -392,11 +348,8 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
   }
 });
 
-// ===== Start =====
 app.listen(PORT, () => {
   console.log(`VoiceSafe backend running on port ${PORT}`);
   console.log(`AI_URL: ${AI_URL}`);
   console.log(`DB: ${DATABASE_URL ? "enabled" : "disabled (DATABASE_URL missing)"}`);
-  console.log(`Google: ${GOOGLE_CLIENT_ID ? "enabled" : "disabled (GOOGLE_CLIENT_ID missing)"}`);
-  console.log(`JWT: ${APP_JWT_SECRET ? "enabled" : "disabled (APP_JWT_SECRET missing)"}`);
 });
