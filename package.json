@@ -1,8 +1,11 @@
 {
   "name": "voicesafe-backend",
-  "version": "3.1.0",
+  "version": "1.0.0",
+  "private": true,
   "main": "server.js",
-  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js"
   },
