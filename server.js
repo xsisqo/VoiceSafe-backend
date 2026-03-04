@@ -1,15 +1,14 @@
 // backend/server.js
-// VoiceSafe Backend — Enterprise PRO MAX (stable) + Google Login (GSI->JWT) + My Cases + Confidence Engine v1
-// ✅ audio + video upload (multer)
-// ✅ normalize -> WAV mono 16kHz (ffmpeg)
+// VoiceSafe Backend — Enterprise (stable) + Google Login (GSI)
+// ✅ audio + video upload
+// ✅ normalize -> WAV mono 16kHz
 // ✅ send to AI (/analyze)
 // ✅ store case in Postgres (DATABASE_URL)
-// ✅ endpoints: /health, /upload, /cases, /cases/:case_id, /case/:case_id
+// ✅ endpoints: /health, /upload, /cases, /cases/:case_id
+// ✅ alias: /case/:case_id
 // ✅ Google login: POST /auth/google (GSI id_token -> verify -> app JWT)
 // ✅ /me returns JWT payload
-// ✅ /my-cases returns cases for logged-in user (user_sub)
-// ✅ confidence fallback if AI doesn't return it
-// ✅ CORS allowlist (voicesafe.ai + www) + optional extra origins via CORS_ORIGINS env (comma-separated)
+// ✅ fixes: ERR_HTTP_HEADERS_SENT guard
 
 const express = require("express");
 const cors = require("cors");
@@ -21,32 +20,24 @@ const FormData = require("form-data");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const { Pool } = require("pg");
+
+// NEW:
 const { OAuth2Client } = require("google-auth-library");
 const jwt = require("jsonwebtoken");
 
 const app = express();
 
-// =========================
-// Config
-// =========================
+// ===== Config =====
 const PORT = process.env.PORT || 5000;
 const AI_URL = process.env.AI_URL || "https://voicesafe-ai.onrender.com/analyze";
 const DATABASE_URL = process.env.DATABASE_URL;
 
+// NEW (Render ENV):
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const APP_JWT_SECRET = process.env.APP_JWT_SECRET || ""; // MUST set in Render
-
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
-// CORS allowlist
-const DEFAULT_ORIGINS = ["https://voicesafe.ai", "https://www.voicesafe.ai"];
-const EXTRA = String(process.env.CORS_ORIGINS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-const CORS_ORIGINS = Array.from(new Set([...DEFAULT_ORIGINS, ...EXTRA]));
-
-// Postgres (Render often needs SSL)
+// On Render, you often need SSL for postgres
 const pool = DATABASE_URL
   ? new Pool({
       connectionString: DATABASE_URL,
@@ -54,28 +45,18 @@ const pool = DATABASE_URL
     })
   : null;
 
-// =========================
-// Middleware
-// =========================
+// ===== CORS =====
 app.use(
   cors({
-    origin: (origin, cb) => {
-      // allow server-to-server / curl without Origin
-      if (!origin) return cb(null, true);
-      if (CORS_ORIGINS.includes(origin)) return cb(null, true);
-      return cb(new Error("CORS blocked"), false);
-    },
+    origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-API-Key"],
-    credentials: false,
   })
 );
 
 app.use(express.json({ limit: "2mb" }));
 
-// =========================
-// Auth helpers
-// =========================
+// ===== Auth helpers (NEW) =====
 function getBearer(req) {
   const h = req.header("authorization") || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
@@ -86,7 +67,7 @@ function authOptional(req, _res, next) {
   try {
     const token = getBearer(req);
     if (!token || !APP_JWT_SECRET) return next();
-    req.user = jwt.verify(token, APP_JWT_SECRET);
+    req.user = jwt.verify(token, APP_JWT_SECRET); // { sub,email,name,picture, ... }
     return next();
   } catch {
     return next();
@@ -105,39 +86,25 @@ function authRequired(req, res, next) {
   }
 }
 
-// =========================
-// Health
-// =========================
-app.get("/", (_req, res) => res.json({ ok: true, service: "voicesafe-backend" }));
+// ===== Health =====
+app.get("/", (req, res) => res.json({ ok: true, service: "voicesafe-backend" }));
 
-app.get("/health", async (_req, res) => {
+app.get("/health", async (req, res) => {
   try {
-    if (!pool) {
-      return res.json({
-        ok: true,
-        db: false,
-        note: "DATABASE_URL missing",
-        google: !!GOOGLE_CLIENT_ID,
-        jwt: !!APP_JWT_SECRET,
-        cors_origins: CORS_ORIGINS,
-      });
-    }
+    if (!pool) return res.json({ ok: true, db: false, note: "DATABASE_URL missing" });
     await pool.query("SELECT 1");
     return res.json({
       ok: true,
       db: true,
       google: !!GOOGLE_CLIENT_ID,
       jwt: !!APP_JWT_SECRET,
-      cors_origins: CORS_ORIGINS,
     });
   } catch (e) {
     return res.status(500).json({ ok: false, db: false, error: e.message });
   }
 });
 
-// =========================
-// Google Login (GSI -> JWT)
-// =========================
+// ===== Google Login (NEW) =====
 // Frontend sends: { id_token: <GSI response.credential> }
 app.post("/auth/google", async (req, res) => {
   try {
@@ -169,26 +136,30 @@ app.post("/auth/google", async (req, res) => {
   }
 });
 
-app.get("/me", authRequired, (req, res) => res.json({ ok: true, user: req.user }));
+// NEW: /me
+app.get("/me", authRequired, async (req, res) => {
+  return res.json({ ok: true, user: req.user });
+});
 
-// =========================
-// Upload folders
-// =========================
+// ===== Uploads folder =====
 const uploadsDir = path.join(__dirname, "uploads");
 const tmpDir = path.join(__dirname, "tmp");
+
 for (const d of [uploadsDir, tmpDir]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
+
+// optional static access
 app.use("/uploads", express.static(uploadsDir));
 
-// =========================
-// Multer
-// =========================
+// ===== Multer =====
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
 const upload = multer({ storage });
+
+// Accept BOTH field names: "audio" (frontend) and "file" (some tests)
 const uploadAnyAudio = upload.fields([
   { name: "audio", maxCount: 1 },
   { name: "file", maxCount: 1 },
@@ -200,9 +171,7 @@ function pickUploadedFile(req) {
   return a || f || null;
 }
 
-// =========================
-// Helpers
-// =========================
+// ===== Helpers =====
 function safeUnlink(p) {
   try {
     if (p && fs.existsSync(p)) fs.unlinkSync(p);
@@ -225,18 +194,6 @@ function makeCaseId() {
   return `VS-${crypto.randomBytes(6).toString("hex")}-${Date.now()}`;
 }
 
-function clamp(n, a, b) {
-  n = Number(n);
-  if (Number.isNaN(n)) return a;
-  return Math.max(a, Math.min(b, n));
-}
-function as01(x) {
-  const n = Number(x);
-  if (Number.isNaN(n)) return null;
-  if (n <= 1) return clamp(n, 0, 1);
-  return clamp(n / 100, 0, 1);
-}
-
 function normalizeAiResult(ai) {
   const scores = ai?.scores || ai || {};
   const scam_score = Number(scores.scam_score ?? scores.scamScore ?? 0);
@@ -247,23 +204,9 @@ function normalizeAiResult(ai) {
   return { scam_score, ai_probability, stress_level, risk_level, confidence };
 }
 
-// Confidence Engine v1 (fallback)
-function computeConfidenceV1({ scam_score, stress_level, ai_probability }) {
-  const scam = as01(scam_score) ?? 0.5;
-  const stress = as01(stress_level) ?? 0.5;
-  const aiP = as01(ai_probability) ?? 0.5;
-
-  // Calibrated, stable: more scam/stress -> higher confidence in "risk signal"
-  const raw = 0.10 + 0.60 * scam + 0.25 * stress + 0.05 * (1 - aiP);
-  return clamp(raw, 0.05, 0.98);
-}
-
-// =========================
-// DB schema
-// =========================
+// ===== DB init =====
 async function ensureSchema() {
   if (!pool) return;
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cases (
       id SERIAL PRIMARY KEY,
@@ -281,23 +224,14 @@ async function ensureSchema() {
       stress_level REAL,
       risk_level TEXT,
       confidence REAL,
-      user_sub TEXT,
-      user_email TEXT,
       ai_json JSONB,
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
-
-  // light migrations (safe IF NOT EXISTS)
-  await pool.query(`ALTER TABLE cases ADD COLUMN IF NOT EXISTS user_sub TEXT;`);
-  await pool.query(`ALTER TABLE cases ADD COLUMN IF NOT EXISTS user_email TEXT;`);
-  await pool.query(`ALTER TABLE cases ADD COLUMN IF NOT EXISTS confidence REAL;`);
 }
 ensureSchema().catch((e) => console.error("DB schema init failed:", e.message));
 
-// =========================
-// Cases endpoints (public list)
-// =========================
+// ===== Cases endpoints =====
 app.get("/cases", async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
@@ -305,30 +239,35 @@ app.get("/cases", async (req, res) => {
     const q = String(req.query.q || "").trim();
     const limit = Math.min(Number(req.query.limit || 50), 200);
 
-    const base = `
-      SELECT case_id, title, platform, country, language, risk_level, confidence, created_at
-      FROM cases
-    `;
-
-    const params = [];
-    let where = "";
+    let rows;
     if (q) {
-      params.push(`%${q}%`);
-      where = ` WHERE (title ILIKE $1 OR notes ILIKE $1 OR tags ILIKE $1 OR case_id ILIKE $1) `;
+      const r = await pool.query(
+        `SELECT case_id, title, platform, country, language, risk_level, confidence, created_at
+         FROM cases
+         WHERE (title ILIKE $1 OR notes ILIKE $1 OR tags ILIKE $1 OR case_id ILIKE $1)
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [`%${q}%`, limit]
+      );
+      rows = r.rows;
+    } else {
+      const r = await pool.query(
+        `SELECT case_id, title, platform, country, language, risk_level, confidence, created_at
+         FROM cases
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+      rows = r.rows;
     }
-    params.push(limit);
 
-    const sql = `${base} ${where} ORDER BY created_at DESC LIMIT $${params.length}`;
-    const r = await pool.query(sql, params);
-
-    return res.json({ ok: true, items: r.rows });
+    return res.json({ ok: true, items: rows });
   } catch (e) {
     if (res.headersSent) return;
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// Single case (public)
 app.get("/cases/:case_id", async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
@@ -336,6 +275,7 @@ app.get("/cases/:case_id", async (req, res) => {
     const case_id = req.params.case_id;
     const r = await pool.query(`SELECT * FROM cases WHERE case_id=$1 LIMIT 1`, [case_id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: "Not found" });
+
     return res.json({ ok: true, item: r.rows[0] });
   } catch (e) {
     if (res.headersSent) return;
@@ -343,6 +283,7 @@ app.get("/cases/:case_id", async (req, res) => {
   }
 });
 
+// Alias: /case/:id
 app.get("/case/:case_id", async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
@@ -350,6 +291,7 @@ app.get("/case/:case_id", async (req, res) => {
     const case_id = req.params.case_id;
     const r = await pool.query(`SELECT * FROM cases WHERE case_id=$1 LIMIT 1`, [case_id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: "Not found" });
+
     return res.json({ ok: true, item: r.rows[0] });
   } catch (e) {
     if (res.headersSent) return;
@@ -357,44 +299,28 @@ app.get("/case/:case_id", async (req, res) => {
   }
 });
 
-// My Cases (private)
-app.get("/my-cases", authRequired, async (req, res) => {
-  try {
-    if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
-
-    const limit = Math.min(Number(req.query.limit || 50), 200);
-    const r = await pool.query(
-      `SELECT case_id, title, platform, country, language, risk_level, confidence, created_at
-       FROM cases
-       WHERE user_sub = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [String(req.user.sub), limit]
-    );
-    return res.json({ ok: true, items: r.rows });
-  } catch (e) {
-    if (res.headersSent) return;
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// =========================
-// Upload + Analyze
-// =========================
+// ===== Upload + Analyze (MAIN) =====
+// authOptional = token môže byť, nemusí
 app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
+  let inputPath = null;
   let wavPath = null;
 
   try {
     const f = pickUploadedFile(req);
     if (!f) return res.status(400).json({ status: "error", message: "No file uploaded" });
 
-    // 1) Convert to WAV mono 16kHz
+    inputPath = f.path;
+
+    // 1) Convert to WAV mono 16kHz via ffmpeg
     wavPath = path.join(tmpDir, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.wav`);
-    await runFfmpeg(["-y", "-i", f.path, "-ac", "1", "-ar", "16000", "-vn", "-c:a", "pcm_s16le", wavPath]);
+    await runFfmpeg(["-y", "-i", inputPath, "-ac", "1", "-ar", "16000", "-vn", "-c:a", "pcm_s16le", wavPath]);
 
     // 2) Send to AI
     const form = new FormData();
-    form.append("file", fs.createReadStream(wavPath), { filename: "audio.wav", contentType: "audio/wav" });
+    form.append("file", fs.createReadStream(wavPath), {
+      filename: "audio.wav",
+      contentType: "audio/wav",
+    });
 
     const fields = ["title", "platform", "country", "language", "tags", "notes"];
     for (const k of fields) {
@@ -412,28 +338,19 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
     const ai = aiResp.data;
     const normalized = normalizeAiResult(ai);
 
-    // 3) confidence (AI -> fallback)
-    let conf01 = as01(normalized.confidence);
-    if (conf01 === null || conf01 === 0) conf01 = computeConfidenceV1(normalized);
-
-    // 4) Save in DB
+    // 3) Store case
     const case_id = makeCaseId();
-    const user_sub = req.user?.sub ? String(req.user.sub) : null;
-    const user_email = req.user?.email ? String(req.user.email) : null;
 
-    const outAi = {
-      ...ai,
-      scores: { ...(ai?.scores || {}), confidence: conf01 },
-      _user: req.user || null,
-    };
+    // (voliteľné) user info do ai_json — aby si to mal v DB už teraz
+    const ai_json = { ...ai, _user: req.user || null };
 
     if (pool) {
       await pool.query(
         `INSERT INTO cases
          (case_id, filename, mime, title, platform, country, language, tags, notes,
-          scam_score, ai_probability, stress_level, risk_level, confidence, user_sub, user_email, ai_json)
+          scam_score, ai_probability, stress_level, risk_level, confidence, ai_json)
          VALUES
-         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           case_id,
           f.filename,
@@ -448,10 +365,8 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
           normalized.ai_probability,
           normalized.stress_level,
           normalized.risk_level,
-          conf01,
-          user_sub,
-          user_email,
-          outAi,
+          normalized.confidence,
+          ai_json,
         ]
       );
     }
@@ -461,11 +376,12 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
       message: "File uploaded + normalized + analyzed",
       case_id,
       filename: f.filename,
-      ai: outAi,
+      ai,
     });
   } catch (err) {
     console.error("UPLOAD/ANALYZE ERROR:", err?.response?.data || err.message);
     if (res.headersSent) return;
+
     return res.status(500).json({
       status: "error",
       message: "Analyze failed",
@@ -476,14 +392,11 @@ app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
   }
 });
 
-// =========================
-// Start
-// =========================
+// ===== Start =====
 app.listen(PORT, () => {
   console.log(`VoiceSafe backend running on port ${PORT}`);
   console.log(`AI_URL: ${AI_URL}`);
   console.log(`DB: ${DATABASE_URL ? "enabled" : "disabled (DATABASE_URL missing)"}`);
-  console.log(`CORS_ORIGINS: ${CORS_ORIGINS.join(", ")}`);
   console.log(`Google: ${GOOGLE_CLIENT_ID ? "enabled" : "disabled (GOOGLE_CLIENT_ID missing)"}`);
   console.log(`JWT: ${APP_JWT_SECRET ? "enabled" : "disabled (APP_JWT_SECRET missing)"}`);
 });
