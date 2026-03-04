@@ -445,7 +445,7 @@ app.get("/audit/recent", adminRequired, async (req, res) => {
 
 // ===== Upload + Analyze (MAIN) =====
 // Protected by API key; JWT is optional
-app.post("/upload", apiKeyRequired, authOptional, uploadAnyAudio, async (req, res) => {
+app.post("/upload", authOptional, uploadAnyAudio, async (req, res) => {
   let inputPath = null;
   let wavPath = null;
 
