@@ -363,7 +363,7 @@ app.get("/cases/search", apiKeyRequired, async (req, res) => {
 });
 
 // Return shape that frontend can render: { ok:true, case_id, ai: {...}, ... }
-app.get("/cases/:case_id", apiKeyRequired, async (req, res) => {
+app.get("/cases/:case_id", async (req, res) => {
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "DATABASE_URL missing" });
 
