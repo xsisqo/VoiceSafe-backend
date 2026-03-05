@@ -46,6 +46,16 @@ const FRONTEND_URL = String(process.env.FRONTEND_URL || "https://voicesafe.ai").
 
 // Google GSI client id
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+const GOOGLE_CLIENT_SECRET = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
+const BACKEND_URL = String(process.env.BACKEND_URL || "https://voicesafe-backend-1.onrender.com").trim();
+const googleOAuthClient =
+  GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET
+    ? new OAuth2Client(
+        GOOGLE_CLIENT_ID,
+        GOOGLE_CLIENT_SECRET,
+        `${BACKEND_URL}/auth/google/callback`
+      )
+    : null;
 
 // Enterprise API keys (comma-separated). First key = admin key.
 const VS_API_KEYS = String(process.env.VS_API_KEYS || "")
@@ -257,16 +267,113 @@ app.get("/health", apiKeyOptional, async (_req, res) => {
 });
 
 // ===========================
-// Google Login (GSI id_token -> app JWT)
+// Google Login
+// 1) GET /auth/google -> redirect OAuth (mobile friendly)
+// 2) GET /auth/google/callback -> create app JWT
+// 3) POST /auth/google -> GSI id_token -> create app JWT
 // ===========================
-// Frontend sends: { id_token: <GSI response.credential> }
+
+// Mobile / redirect flow
+app.get("/auth/google", (req, res) => {
+  try {
+    if (!googleOAuthClient) {
+      return res.status(500).send("Google OAuth not configured");
+    }
+
+    const returnTo =
+      typeof req.query.returnTo === "string" && req.query.returnTo.trim()
+        ? req.query.returnTo.trim()
+        : FRONTEND_URL;
+
+    const state = Buffer.from(JSON.stringify({ returnTo })).toString("base64url");
+
+    const url = googleOAuthClient.generateAuthUrl({
+      access_type: "online",
+      prompt: "select_account",
+      scope: ["openid", "email", "profile"],
+      state,
+    });
+
+    return res.redirect(url);
+  } catch (e) {
+    console.error("GET /auth/google error:", e);
+    return res.status(500).send("Google login start failed");
+  }
+});
+
+// OAuth callback
+app.get("/auth/google/callback", async (req, res) => {
+  try {
+    if (!googleOAuthClient) {
+      return res.redirect(`${FRONTEND_URL}?login=error&reason=google_oauth_not_configured`);
+    }
+    if (!APP_JWT_SECRET) {
+      return res.redirect(`${FRONTEND_URL}?login=error&reason=app_jwt_missing`);
+    }
+
+    const code = req.query.code;
+    const stateRaw = typeof req.query.state === "string" ? req.query.state : "";
+    const stateJson = stateRaw
+      ? JSON.parse(Buffer.from(stateRaw, "base64url").toString("utf8"))
+      : {};
+
+    const returnTo = stateJson?.returnTo || FRONTEND_URL;
+
+    if (!code || typeof code !== "string") {
+      return res.redirect(`${FRONTEND_URL}?login=error&reason=missing_code`);
+    }
+
+    const { tokens } = await googleOAuthClient.getToken(code);
+    const idToken = tokens?.id_token;
+
+    if (!idToken) {
+      return res.redirect(`${FRONTEND_URL}?login=error&reason=no_id_token`);
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+
+    const p = ticket.getPayload() || {};
+
+    const user = {
+      sub: String(p.sub || ""),
+      email: String(p.email || ""),
+      name: String(p.name || ""),
+      picture: String(p.picture || ""),
+    };
+
+    if (!user.sub) {
+      return res.redirect(`${FRONTEND_URL}?login=error&reason=invalid_google_token`);
+    }
+
+    const token = jwt.sign(user, APP_JWT_SECRET, { expiresIn: "30d" });
+
+    await audit("login_google_oauth", { email: user.email, sub: user.sub });
+
+    const glue = returnTo.includes("?") ? "&" : "?";
+    return res.redirect(`${returnTo}${glue}token=${encodeURIComponent(token)}`);
+  } catch (e) {
+    console.error("Google callback error:", e);
+    return res.redirect(`${FRONTEND_URL}?login=error&reason=callback_failed`);
+  }
+});
+
+// Frontend GSI flow
 app.post("/auth/google", async (req, res) => {
   try {
-    if (!googleClient) return res.status(500).json({ ok: false, error: "GOOGLE_CLIENT_ID missing" });
-    if (!APP_JWT_SECRET) return res.status(500).json({ ok: false, error: "APP_JWT_SECRET missing" });
+    if (!googleClient) {
+      return res.status(500).json({ ok: false, error: "GOOGLE_CLIENT_ID missing" });
+    }
+    if (!APP_JWT_SECRET) {
+      return res.status(500).json({ ok: false, error: "APP_JWT_SECRET missing" });
+    }
 
     const { id_token } = req.body || {};
-    if (!id_token) return res.status(400).json({ ok: false, error: "id_token missing" });
+    if (!id_token) {
+      return res.status(400).json({ ok: false, error: "id_token missing" });
+    }
 
     const ticket = await googleClient.verifyIdToken({
       idToken: id_token,
@@ -281,11 +388,13 @@ app.post("/auth/google", async (req, res) => {
       picture: String(p.picture || ""),
     };
 
-    if (!user.sub) return res.status(401).json({ ok: false, error: "Invalid Google token" });
+    if (!user.sub) {
+      return res.status(401).json({ ok: false, error: "Invalid Google token" });
+    }
 
     const token = jwt.sign(user, APP_JWT_SECRET, { expiresIn: "30d" });
 
-    await audit("login_google", { email: user.email, sub: user.sub });
+    await audit("login_google_gsi", { email: user.email, sub: user.sub });
 
     return res.json({ ok: true, user, token });
   } catch (e) {
