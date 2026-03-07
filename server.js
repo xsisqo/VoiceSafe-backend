@@ -288,11 +288,12 @@ app.get("/auth/google", (req, res) => {
     const state = Buffer.from(JSON.stringify({ returnTo })).toString("base64url");
 
     const url = googleOAuthClient.generateAuthUrl({
-      access_type: "online",
-      prompt: "select_account",
-      scope: ["openid", "email", "profile"],
-      state,
-    });
+  access_type: "online",
+  prompt: "select_account",
+  scope: ["openid", "email", "profile"],
+  redirect_uri: `${BACKEND_URL}/auth/google/callback`,
+  state,
+});
 
     return res.redirect(url);
   } catch (e) {
